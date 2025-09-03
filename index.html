@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<title>Flight Logger – Diário de Bordo (v8.2)</title>
+<title>Flight Logger – Diário de Bordo (v8.3)</title>
 <meta name="theme-color" content="#111827">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -46,7 +46,7 @@ th{background:#0e1627;color:#cbd5e1}
 <body>
 <div class="wrap">
   <header>
-    <h1>Flight Logger – Diário de Bordo (v8.2)</h1>
+    <h1>Flight Logger – Diário de Bordo (v8.3)</h1>
     <div class="pill">Fuso: <span id="tzname"></span></div>
   </header>
 
@@ -135,7 +135,13 @@ document.getElementById('tzname').textContent = tz;
 const pad = (n)=>String(n).padStart(2,'0');
 const fmtHM = (d)=> d? `${pad(d.getHours())}:${pad(d.getMinutes())}` : '';
 
-// Robust parsing/normalization + validation UI
+function currentBaseDate(){
+  const dateEl = document.getElementById("date");
+  const iso = (dateEl && dateEl.value) ? dateEl.value : new Date().toISOString().slice(0,10);
+  return new Date(iso+"T00:00:00");
+}
+
+// Robust parsing/normalization + mirrors
 function normalizeHM(txt){
   if(!txt){ return null; }
   const t = txt.trim();
@@ -157,22 +163,23 @@ function normalizeHM(txt){
 }
 const msToHM = (ms)=>{ if(ms==null||isNaN(ms)) return ''; if(ms<0) ms+=86400000; const t=Math.round(ms/60000); const h=Math.floor(t/60); const m=t%60; return `${pad(h)}:${pad(m)}`; };
 const hmToDec = (hm)=>{ if(!/^\d{2}:\d{2}$/.test(hm||'')) return ''; const [H,M]=hm.split(':').map(Number); return (H + M/60).toFixed(2); };
-const parseHM = (hm, date)=>{ if(!hm||!/^\\d{2}:\d{2}$/.test(hm)) return null; const [H,M]=hm.split(':').map(n=>+n); return new Date(date.getFullYear(), date.getMonth(), date.getDate(), H, M, 0); };
+const parseHM = (hm, baseDate)=>{ if(!hm||!/^\\d{2}:\\d{2}$/.test(hm)) return null; const [H,M]=hm.split(':').map(n=>+n); return new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), H, M, 0); };
+
 const todayISO = new Date().toISOString().slice(0,10);
 document.getElementById('date').value = todayISO;
 
 const state = {
   date:new Date(), tail:'', flightNo:'', captain:'', copilot:'', pob:'',
   allowEdit:false,
-  legs:[ {rv:'',orig:'',dst:'',st:null,to:null,ld:null,sht:null,day:'',night:'',vfr:'',ifr:'',ldgCount:1,startFuel:'',finalFuel:'',mtow:false,countLanding:true} ],
+  legs:[ {rv:'',orig:'',dst:'',st:null,to:null,ld:null,sht:null,stS:'',toS:'',ldS:'',shtS:'',day:'',night:'',vfr:'',ifr:'',ldgCount:1,startFuel:'',finalFuel:'',mtow:false,countLanding:true} ],
   active:0
 };
 
-function addLeg(){ const last=state.legs[state.legs.length-1]; const nl={rv:state.flightNo||'',orig:last? (last.dst||''):'',dst:'',st:null,to:null,ld:null,sht:null,day:'',night:'',vfr:'',ifr:'',ldgCount:1,startFuel:'',finalFuel:'',mtow:false,countLanding:true}; state.legs.push(nl); state.active=state.legs.length-1; render(); }
+function addLeg(){ const last=state.legs[state.legs.length-1]; const nl={rv:state.flightNo||'',orig:last? (last.dst||''):'',dst:'',st:null,to:null,ld:null,sht:null,stS:'',toS:'',ldS:'',shtS:'',day:'',night:'',vfr:'',ifr:'',ldgCount:1,startFuel:'',finalFuel:'',mtow:false,countLanding:true}; state.legs.push(nl); state.active=state.legs.length-1; render(); }
 function removeLeg(){ if(state.legs.length>1){ state.legs.splice(state.active,1); state.active=Math.max(0,state.active-1); render(); } }
 
-function legAirMs(L){ if(L.to && L.ld){ let ms=L.ld - L.to; if(ms<0) ms+=86400000; return ms; } return null; }
-function legBlockMs(L){ if(L.st && L.sht){ let ms=L.sht - L.st; if(ms<0) ms+=86400000; return ms; } return null; }
+function legAirMs(L){ const hmTo=L.to?fmtHM(L.to):L.toS; const hmLd=L.ld?fmtHM(L.ld):L.ldS; if(/^\d{2}:\d{2}$/.test(hmTo||'') && /^\d{2}:\d{2}$/.test(hmLd||'')){ const base=currentBaseDate(); const toD=parseHM(hmTo,base), ldD=parseHM(hmLd,base); let ms=ldD-toD; if(ms<0) ms+=86400000; return ms; } return null; }
+function legBlockMs(L){ const hmSt=L.st?fmtHM(L.st):L.stS; const hmSht=L.sht?fmtHM(L.sht):L.shtS; if(/^\d{2}:\d{2}$/.test(hmSt||'') && /^\d{2}:\d{2}$/.test(hmSht||'')){ const base=currentBaseDate(); const stD=parseHM(hmSt,base), shtD=parseHM(hmSht,base); let ms=shtD-stD; if(ms<0) ms+=86400000; return ms; } return null; }
 function sumAirMs(){ return state.legs.reduce((a,L)=>{const ms=legAirMs(L); return a + (ms||0); },0); }
 function sumBlockMs(){ const m=state.legs.map(legBlockMs).filter(Boolean); return m.reduce((a,b)=>a+b,0); }
 
@@ -180,15 +187,19 @@ function renderLegEditor(){
   const i=state.active, L=state.legs[i];
   const box=document.getElementById('legsList'); box.innerHTML='';
   const ro = state.allowEdit ? '' : 'readonly';
+  const stV = L.stS || (L.st?fmtHM(L.st):'');
+  const toV = L.toS || (L.to?fmtHM(L.to):'');
+  const ldV = L.ldS || (L.ld?fmtHM(L.ld):'');
+  const shtV = L.shtS || (L.sht?fmtHM(L.sht):'');
   const row=document.createElement('div'); row.className='row'; row.innerHTML = `
     <div><label>ST (seq)</label><input value="${i+1}" disabled></div>
     <div><label>RV (relatório)</label><input id="leg_rv" placeholder="RV" value="${L.rv||''}"></div>
     <div><label>From (ICAO)</label><input id="leg_orig" placeholder="SB.." value="${L.orig||''}"></div>
     <div><label>To (ICAO)</label><input id="leg_dst" placeholder="SB.." value="${L.dst||''}"></div>
-    <div><label>Start</label><input id="leg_st" class="mono" inputmode="numeric" placeholder="HH:MM" value="${L.st?fmtHM(L.st):''}" ${ro} title="Ex: 07:05, 705, 7:5"></div>
-    <div><label>Take Off</label><input id="leg_to" class="mono" inputmode="numeric" placeholder="HH:MM" value="${L.to?fmtHM(L.to):''}" ${ro} title="Ex: 07:05, 705, 7:5"></div>
-    <div><label>Landing</label><input id="leg_ld" class="mono" inputmode="numeric" placeholder="HH:MM" value="${L.ld?fmtHM(L.ld):''}" ${ro} title="Ex: 07:05, 705, 7:5"></div>
-    <div><label>Shut Down</label><input id="leg_sht" class="mono" inputmode="numeric" placeholder="HH:MM" value="${L.sht?fmtHM(L.sht):''}" ${ro} title="Ex: 07:05, 705, 7:5"></div>
+    <div><label>Start</label><input id="leg_st" class="mono" inputmode="numeric" placeholder="HH:MM" value="${stV}" ${ro}></div>
+    <div><label>Take Off</label><input id="leg_to" class="mono" inputmode="numeric" placeholder="HH:MM" value="${toV}" ${ro}></div>
+    <div><label>Landing</label><input id="leg_ld" class="mono" inputmode="numeric" placeholder="HH:MM" value="${ldV}" ${ro}></div>
+    <div><label>Shut Down</label><input id="leg_sht" class="mono" inputmode="numeric" placeholder="HH:MM" value="${shtV}" ${ro}></div>
     <div><label>Day Time</label><input id="leg_day" class="mono" placeholder="HH:MM" value="${L.day||''}" ${ro}></div>
     <div><label>Night Time</label><input id="leg_night" class="mono" placeholder="HH:MM" value="${L.night||''}" ${ro}></div>
     <div><label>VFR</label><input id="leg_vfr" class="mono" placeholder="HH:MM" value="${L.vfr||''}" ${ro}></div>
@@ -202,27 +213,30 @@ function renderLegEditor(){
   box.appendChild(row);
   box.classList.toggle('readonly', !state.allowEdit);
 
-  const d = new Date(document.getElementById("date").value+"T00:00:00");
-  const commitHM = (key, el)=>{
+  const commitHM = (key, mirrorKey, el)=>{
     if(!state.allowEdit) return;
     const n = normalizeHM(el.value);
+    state.legs[i][mirrorKey] = el.value; // keep whatever user typed
     if(!n){ el.classList.add('invalid'); return; }
     el.classList.remove('invalid');
-    state.legs[i][key] = parseHM(n, d);
+    const base = currentBaseDate();
+    state.legs[i][key] = parseHM(n, base);
+    state.legs[i][mirrorKey] = n; // store normalized mirror
     el.value = n;
     render();
   };
-  const wireHM = (id, key)=>{
+  const wireTime = (id, key, mirrorKey)=>{
     const el = document.getElementById(id);
-    const handler = ()=> commitHM(key, el);
+    el.addEventListener('input', ()=>{ state.legs[i][mirrorKey] = el.value; }); // no render
+    const handler = ()=> commitHM(key, mirrorKey, el);
     el.addEventListener('change', handler);
     el.addEventListener('blur', handler);
     el.addEventListener('keydown', (ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); handler(); } });
   };
-  wireHM("leg_st","st");
-  wireHM("leg_to","to");
-  wireHM("leg_ld","ld");
-  wireHM("leg_sht","sht");
+  wireTime("leg_st","st","stS");
+  wireTime("leg_to","to","toS");
+  wireTime("leg_ld","ld","ldS");
+  wireTime("leg_sht","sht","shtS");
 
   document.getElementById("leg_rv").oninput = e=>{ state.legs[i].rv=e.target.value.trim(); };
   document.getElementById("leg_orig").oninput = e=>{ state.legs[i].orig=e.target.value.trim().toUpperCase(); };
@@ -236,18 +250,25 @@ function renderLegEditor(){
   document.getElementById("leg_count_ldg").onchange = e=>{ state.legs[i].countLanding = e.target.checked; render(); };
 }
 
+function airHM(L){ const ms=legAirMs(L); return ms!=null? msToHM(ms) : '--:--'; }
+function blkHM(L){ const ms=legBlockMs(L); return ms!=null? msToHM(ms) : ''; }
+
 function renderSummary(){
   const i=state.active, L=state.legs[i];
-  const air=legAirMs(L), block=legBlockMs(L);
   const lines=[];
   lines.push(`ST: ${i+1}  RV: ${L.rv||''}`);
   lines.push(`Rota: ${L.orig||'—'} → ${L.dst||'—'}`);
-  lines.push(`ST:${L.st?fmtHM(L.st):'--:--'}  TO:${L.to?fmtHM(L.to):'--:--'}  LD:${L.ld?fmtHM(L.ld):'--:--'}  SHT:${L.sht?fmtHM(L.sht):'--:--'}`);
-  if(air!=null) lines.push(`Tempo de Voo: ${msToHM(air)} (${hmToDec(msToHM(air))} h dec)`);
-  if(block!=null) lines.push(`Tempo de Bloco: ${msToHM(block)}`);
+  const stV = L.stS || (L.st?fmtHM(L.st):'--:--');
+  const toV = L.toS || (L.to?fmtHM(L.to):'--:--');
+  const ldV = L.ldS || (L.ld?fmtHM(L.ld):'--:--');
+  const shtV = L.shtS || (L.sht?fmtHM(L.sht):'--:--');
+  lines.push(`ST:${stV||'--:--'}  TO:${toV||'--:--'}  LD:${ldV||'--:--'}  SHT:${shtV||'--:--'}`);
+  const air = airHM(L), blk = blkHM(L);
+  if(air && air!=='--:--') lines.push(`Tempo de Voo: ${air} (${hmToDec(air)} h dec)`);
+  if(blk) lines.push(`Tempo de Bloco: ${blk}`);
   lines.push(`LDG: ${L.ldgCount||1}  MTOW: ${L.mtow?'Sim':'Não'}  Conta pouso: ${L.countLanding?'Sim':'Não'}`);
   lines.push(`Fuel: Start ${L.startFuel||'—'} • Final ${L.finalFuel||'—'}`);
-  document.getElementById("summary").value = lines.join('\\n');
+  document.getElementById("summary").value = lines.join('\n');
 }
 
 function renderTotals(){
@@ -257,11 +278,14 @@ function renderTotals(){
 
 function renderPDFPreview(){
   const i=state.active, L=state.legs[i];
-  const air=legAirMs(L);
-  const airHM = air!=null? msToHM(air):'--:--';
-  const airDec = air!=null? hmToDec(airHM):'';
+  const air = airHM(L);
+  const airDec = air && air!=='--:--' ? hmToDec(air) : '';
   const pousos = L.countLanding ? (L.ldgCount||1) : 0;
   const fillExtra = (L.mtow && L.countLanding);
+  const stV = L.stS || (L.st?fmtHM(L.st):'');
+  const toV = L.toS || (L.to?fmtHM(L.to):'');
+  const ldV = L.ldS || (L.ld?fmtHM(L.ld):'');
+  const shtV = L.shtS || (L.sht?fmtHM(L.sht):'');
   const html = `
   <table>
     <thead><tr>
@@ -275,8 +299,8 @@ function renderPDFPreview(){
     </tr></thead>
     <tbody><tr>
       <td>${i+1}</td><td>${L.rv||''}</td><td>${L.orig||''}</td><td>${L.dst||''}</td>
-      <td>${L.st?fmtHM(L.st):''}</td><td>${L.to?fmtHM(L.to):''}</td><td>${L.ld?fmtHM(L.ld):''}</td><td>${L.sht?fmtHM(L.sht):''}</td>
-      <td>${airHM}</td><td>${legBlockMs(L)!=null?msToHM(legBlockMs(L)):''}</td><td>${L.ldgCount||1}</td>
+      <td>${stV}</td><td>${toV}</td><td>${ldV}</td><td>${shtV}</td>
+      <td>${air||''}</td><td>${blkHM(L)||''}</td><td>${L.ldgCount||1}</td>
       <td>${L.day||''}</td><td>${L.night||''}</td><td>${L.vfr||''}</td><td>${L.ifr||''}</td>
       <td>${L.startFuel||''}</td><td>${L.finalFuel||''}</td>
       <td>${L.mtow?'Sim':'Não'}</td><td>${L.countLanding?'Sim':'Não'}</td>
@@ -288,7 +312,7 @@ function renderPDFPreview(){
 }
 
 function render(){
-  state.date = new Date(document.getElementById("date").value+"T00:00:00");
+  state.date = currentBaseDate();
   state.tail = (document.getElementById("tail").value||'').trim();
   state.flightNo = (document.getElementById("flightNo").value||'').trim();
   state.captain = (document.getElementById("captain").value||'').trim();
@@ -322,27 +346,30 @@ function promptFuel(label, curr){
 }
 document.getElementById("barStart").onclick = ()=>{
   const L=state.legs[state.active];
-  if(!L.st){ L.st = new Date(); }
+  if(!L.st && !L.stS){ const now=new Date(); const hh=`${pad(now.getHours())}:${pad(now.getMinutes())}`; L.st = now; L.stS = hh; }
   L.startFuel = promptFuel('Start Fuel', L.startFuel);
   render();
 };
 document.getElementById("barTkoff").onclick = ()=>{
   const L=state.legs[state.active];
-  if(L.to && L.ld){ addLeg(); }
-  state.legs[state.active].to = new Date();
+  if((L.to||L.toS) && (L.ld||L.ldS)){ addLeg(); }
+  const now=new Date(); const hh=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  state.legs[state.active].to = now; state.legs[state.active].toS = hh;
   render();
 };
 document.getElementById("barLand").onclick = ()=>{
   const L=state.legs[state.active];
-  if(!L.to){ L.to = new Date(new Date().getTime()-60000); }
-  L.ld = new Date();
+  if(!L.to && !L.toS){ const now=new Date(new Date().getTime()-60000); const hh=`${pad(now.getHours())}:${pad(now.getMinutes())}`; L.to=now; L.toS=hh; }
+  const now=new Date(); const hh=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  L.ld = now; L.ldS = hh;
   if(L.countLanding){ L.ldgCount = Math.max(1, parseInt(L.ldgCount||'1')); }
   L.finalFuel = promptFuel('Final Fuel (pós-pouso)', L.finalFuel);
   render();
 };
 document.getElementById("barShut").onclick = ()=>{
   const L=state.legs[state.active];
-  L.sht = new Date();
+  const now=new Date(); const hh=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  L.sht = now; L.shtS = hh;
   L.finalFuel = promptFuel('Final Fuel (corte)', L.finalFuel);
   render();
 };
@@ -356,13 +383,17 @@ document.getElementById("btnCSV").onclick = ()=>{
     const airDec = air!=null? hmToDec(airHM):'';
     const pousos = L.countLanding ? (L.ldgCount||1) : 0;
     const fillExtra = (L.mtow && L.countLanding);
-    return [i+1,L.rv||'',L.orig||'',L.dst||'', L.st?fmtHM(L.st):'',L.to?fmtHM(L.to):'',L.ld?fmtHM(L.ld):'',L.sht?fmtHM(L.sht):'',
+    const stV = L.stS || (L.st?fmtHM(L.st):'');
+    const toV = L.toS || (L.to?fmtHM(L.to):'');
+    const ldV = L.ldS || (L.ld?fmtHM(L.ld):'');
+    const shtV = L.shtS || (L.sht?fmtHM(L.sht):'');
+    return [i+1,L.rv||'',L.orig||'',L.dst||'', stV,toV,ldV,shtV,
             airHM, blk!=null?msToHM(blk):'', L.ldgCount||1, L.day||'',L.night||'',L.vfr||'',L.ifr||'', L.startFuel||'',L.finalFuel||'',
             L.mtow?'Sim':'Não', L.countLanding?'Sim':'Não', fillExtra?airDec:'', fillExtra?pousos:''];
   });
   const csv = [hdr].concat(rows).map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
-  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`flight-logger-v8_2-${document.getElementById("date").value||'data'}.csv`; a.click(); URL.revokeObjectURL(url);
+  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`flight-logger-v8_3-${document.getElementById("date").value||'data'}.csv`; a.click(); URL.revokeObjectURL(url);
 };
 
 // Exportar PDF da LINHA ATUAL
@@ -382,11 +413,15 @@ document.getElementById("btnExportPDF").onclick = ()=>{
     </style>`;
   const i=state.active, L=state.legs[i];
   const air=legAirMs(L), blk=legBlockMs(L);
-  const airHM = air!=null? msToHM(air):'';
-  const airDec = air!=null? hmToDec(airHM):'';
+  const airHMv = air!=null? msToHM(air):'';
+  const airDec = air!=null? hmToDec(airHMv):'';
   const blkHM = blk!=null? msToHM(blk):'';
   const pousos = L.countLanding ? (L.ldgCount||1) : 0;
   const fillExtra = (L.mtow && L.countLanding);
+  const stV = L.stS || (L.st?fmtHM(L.st):'');
+  const toV = L.toS || (L.to?fmtHM(L.to):'');
+  const ldV = L.ldS || (L.ld?fmtHM(L.ld):'');
+  const shtV = L.shtS || (L.sht?fmtHM(L.sht):'');
   const html = `
     <!doctype html><html><head><meta charset="utf-8">${style}</head><body>
       <div class="title"><h2>Diário – Linha (Etapa ${i+1})</h2><span class="pill">${new Date().toLocaleString()}</span></div>
@@ -403,8 +438,8 @@ document.getElementById("btnExportPDF").onclick = ()=>{
         </tr></thead>
         <tbody><tr>
           <td>${i+1}</td><td>${L.rv||''}</td><td>${L.orig||''}</td><td>${L.dst||''}</td>
-          <td>${L.st?fmtHM(L.st):''}</td><td>${L.to?fmtHM(L.to):''}</td><td>${L.ld?fmtHM(L.ld):''}</td><td>${L.sht?fmtHM(L.sht):''}</td>
-          <td>${airHM}</td><td>${blkHM}</td><td>${L.ldgCount||1}</td>
+          <td>${stV}</td><td>${toV}</td><td>${ldV}</td><td>${shtV}</td>
+          <td>${airHMv}</td><td>${blkHM}</td><td>${L.ldgCount||1}</td>
           <td>${L.day||''}</td><td>${L.night||''}</td><td>${L.vfr||''}</td><td>${L.ifr||''}</td>
           <td>${L.startFuel||''}</td><td>${L.finalFuel||''}</td>
           <td>${L.mtow?'Sim':'Não'}</td><td>${L.countLanding?'Sim':'Não'}</td>
@@ -418,7 +453,7 @@ document.getElementById("btnExportPDF").onclick = ()=>{
 
 // Save/Load/Clear
 document.getElementById("btnSave").onclick = ()=>{
-  localStorage.setItem('flight-logger-v8_2', JSON.stringify({
+  localStorage.setItem('flight-logger-v8_3', JSON.stringify({
     ...state,
     legs: state.legs.map(L=>({...L,
       st: L.st?L.st.toISOString():null, to:L.to?L.toISOString():null, ld:L.ld?L.ld.toISOString():null, sht:L.sht?L.sht.toISOString():null
@@ -428,19 +463,22 @@ document.getElementById("btnSave").onclick = ()=>{
   alert('Salvo no dispositivo.');
 };
 document.getElementById("btnLoad").onclick = ()=>{
-  const raw=localStorage.getItem('flight-logger-v8_2'); if(!raw){ alert('Nada salvo.'); return; }
+  const raw=localStorage.getItem('flight-logger-v8_3'); if(!raw){ alert('Nada salvo.'); return; }
   const o=JSON.parse(raw);
   document.getElementById("date").value = o.date || todayISO;
   state.tail=o.tail||''; state.flightNo=o.flightNo||''; state.captain=o.captain||''; state.copilot=o.copilot||''; state.pob=o.pob||'';
   state.allowEdit=!!o.allowEdit;
-  state.legs=(o.legs||[]).map(L=>({...L, st:L.st?new Date(L.st):null, to:L.to?new Date(L.to):null, ld:L.ld?new Date(L.ld):null, sht:L.sht?new Date(L.sht):null}));
-  if(state.legs.length===0) state.legs=[{rv:'',orig:'',dst:'',st:null,to:null,ld:null,sht:null,day:'',night:'',vfr:'',ifr:'',ldgCount:1,startFuel:'',finalFuel:'',mtow:false,countLanding:true}];
+  state.legs=(o.legs||[]).map(L=>({...L,
+    st:L.st?new Date(L.st):null, to:L.to?new Date(L.to):null, ld:L.ld?new Date(L.ld):null, sht:L.sht?new Date(L.sht):null,
+    stS:L.stS||'', toS:L.toS||'', ldS:L.ldS||'', shtS:L.shtS||''
+  }));
+  if(state.legs.length===0) state.legs=[{rv:'',orig:'',dst:'',st:null,to:null,ld:null,sht:null,stS:'',toS:'',ldS:'',shtS:'',day:'',night:'',vfr:'',ifr:'',ldgCount:1,startFuel:'',finalFuel:'',mtow:false,countLanding:true}];
   state.active=Math.min(o.active||0, state.legs.length-1);
   render();
 };
 document.getElementById("btnClear").onclick = ()=>{
   if(!confirm('Limpar todas as etapas?')) return;
-  state.legs=[{rv:'',orig:'',dst:'',st:null,to:null,ld:null,sht:null,day:'',night:'',vfr:'',ifr:'',ldgCount:1,startFuel:'',finalFuel:'',mtow:false,countLanding:true}];
+  state.legs=[{rv:'',orig:'',dst:'',st:null,to:null,ld:null,sht:null,stS:'',toS:'',ldS:'',shtS:'',day:'',night:'',vfr:'',ifr:'',ldgCount:1,startFuel:'',finalFuel:'',mtow:false,countLanding:true}];
   state.active=0; state.allowEdit=false; render();
 };
 

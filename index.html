@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<title>Flight Logger – Diário de Bordo (v8.1)</title>
+<title>Flight Logger – Diário de Bordo (v8.2)</title>
 <meta name="theme-color" content="#111827">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -18,7 +18,6 @@ h1{font-size:20px;margin:0;font-weight:700}
 .row>*{flex:1 1 160px}
 label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
 input,select,textarea{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:#0e1627;color:#e5e7eb}
-input[type=time]{padding:10px 12px}
 textarea{min-height:64px;resize:vertical}
 .pill{background:#0e1627;border:1px solid var(--line);padding:8px 10px;border-radius:999px;font-size:12px;color:var(--muted)}
 table{width:100%;border-collapse:collapse;margin-top:8px}
@@ -32,6 +31,7 @@ th{background:#0e1627;color:#cbd5e1}
 .badge .count{min-width:24px;text-align:center;font-weight:700}
 .switch{display:flex;align-items:center;gap:8px}
 .switch input{transform:scale(1.2)}
+.invalid{border-color:var(--danger)!important; box-shadow:0 0 0 2px rgba(239,68,68,.25)}
 .action-bar{position:fixed;left:0;right:0;bottom:0;background:rgba(17,24,39,.98);backdrop-filter:saturate(1.2) blur(6px);border-top:1px solid var(--line);padding:10px max(env(safe-area-inset-left),16px) calc(10px + env(safe-area-inset-bottom));z-index:999}
 .action-inner{max-width:980px;margin:0 auto;display:flex;gap:8px;align-items:center;justify-content:space-between}
 .action-group{display:flex;gap:8px;flex-wrap:nowrap}
@@ -46,7 +46,7 @@ th{background:#0e1627;color:#cbd5e1}
 <body>
 <div class="wrap">
   <header>
-    <h1>Flight Logger – Diário de Bordo (v8.1)</h1>
+    <h1>Flight Logger – Diário de Bordo (v8.2)</h1>
     <div class="pill">Fuso: <span id="tzname"></span></div>
   </header>
 
@@ -132,23 +132,20 @@ th{background:#0e1627;color:#cbd5e1}
 <script>
 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Sao_Paulo';
 document.getElementById('tzname').textContent = tz;
-const $ = (s)=>document.querySelector(s);
 const pad = (n)=>String(n).padStart(2,'0');
 const fmtHM = (d)=> d? `${pad(d.getHours())}:${pad(d.getMinutes())}` : '';
 
-// Robust parsing/normalization for time text
+// Robust parsing/normalization + validation UI
 function normalizeHM(txt){
   if(!txt){ return null; }
   const t = txt.trim();
   if(/^\d{2}:\d{2}$/.test(t)) return t;
-  // 7:5 -> 07:05
   const m1 = /^(\d{1,2}):(\d{1,2})$/.exec(t);
   if(m1){
     let H = Math.min(23, parseInt(m1[1]||'0',10));
     let M = Math.min(59, parseInt(m1[2]||'0',10));
     return `${pad(H)}:${pad(M)}`;
   }
-  // 730 -> 07:30 ; 7 -> 07:00 ; 123 -> 01:23
   if(/^\d{1,4}$/.test(t)){
     const n = t;
     if(n.length===1) return `${pad(parseInt(n,10))}:00`;
@@ -160,7 +157,7 @@ function normalizeHM(txt){
 }
 const msToHM = (ms)=>{ if(ms==null||isNaN(ms)) return ''; if(ms<0) ms+=86400000; const t=Math.round(ms/60000); const h=Math.floor(t/60); const m=t%60; return `${pad(h)}:${pad(m)}`; };
 const hmToDec = (hm)=>{ if(!/^\d{2}:\d{2}$/.test(hm||'')) return ''; const [H,M]=hm.split(':').map(Number); return (H + M/60).toFixed(2); };
-const parseHM = (hm, date)=>{ if(!hm||!/^\\d{2}:\\d{2}$/.test(hm)) return null; const [H,M]=hm.split(':').map(n=>+n); return new Date(date.getFullYear(), date.getMonth(), date.getDate(), H, M, 0); };
+const parseHM = (hm, date)=>{ if(!hm||!/^\\d{2}:\d{2}$/.test(hm)) return null; const [H,M]=hm.split(':').map(n=>+n); return new Date(date.getFullYear(), date.getMonth(), date.getDate(), H, M, 0); };
 const todayISO = new Date().toISOString().slice(0,10);
 document.getElementById('date').value = todayISO;
 
@@ -171,7 +168,6 @@ const state = {
   active:0
 };
 
-function ensureLeg(i){ while(state.legs.length<=i) state.legs.push({rv:'',orig:'',dst:'',st:null,to:null,ld:null,sht:null,day:'',night:'',vfr:'',ifr:'',ldgCount:1,startFuel:'',finalFuel:'',mtow:false,countLanding:true}); }
 function addLeg(){ const last=state.legs[state.legs.length-1]; const nl={rv:state.flightNo||'',orig:last? (last.dst||''):'',dst:'',st:null,to:null,ld:null,sht:null,day:'',night:'',vfr:'',ifr:'',ldgCount:1,startFuel:'',finalFuel:'',mtow:false,countLanding:true}; state.legs.push(nl); state.active=state.legs.length-1; render(); }
 function removeLeg(){ if(state.legs.length>1){ state.legs.splice(state.active,1); state.active=Math.max(0,state.active-1); render(); } }
 
@@ -183,19 +179,20 @@ function sumBlockMs(){ const m=state.legs.map(legBlockMs).filter(Boolean); retur
 function renderLegEditor(){
   const i=state.active, L=state.legs[i];
   const box=document.getElementById('legsList'); box.innerHTML='';
+  const ro = state.allowEdit ? '' : 'readonly';
   const row=document.createElement('div'); row.className='row'; row.innerHTML = `
     <div><label>ST (seq)</label><input value="${i+1}" disabled></div>
     <div><label>RV (relatório)</label><input id="leg_rv" placeholder="RV" value="${L.rv||''}"></div>
     <div><label>From (ICAO)</label><input id="leg_orig" placeholder="SB.." value="${L.orig||''}"></div>
     <div><label>To (ICAO)</label><input id="leg_dst" placeholder="SB.." value="${L.dst||''}"></div>
-    <div><label>Start</label><input type="time" id="leg_st" class="mono" placeholder="--:--" value="${L.st?fmtHM(L.st):''}" ${state.allowEdit?'':'readonly'}></div>
-    <div><label>Take Off</label><input type="time" id="leg_to" class="mono" placeholder="--:--" value="${L.to?fmtHM(L.to):''}" ${state.allowEdit?'':'readonly'}></div>
-    <div><label>Landing</label><input type="time" id="leg_ld" class="mono" placeholder="--:--" value="${L.ld?fmtHM(L.ld):''}" ${state.allowEdit?'':'readonly'}></div>
-    <div><label>Shut Down</label><input type="time" id="leg_sht" class="mono" placeholder="--:--" value="${L.sht?fmtHM(L.sht):''}" ${state.allowEdit?'':'readonly'}></div>
-    <div><label>Day Time</label><input id="leg_day" class="mono" placeholder="HH:MM" value="${L.day||''}" ${state.allowEdit?'':'readonly'}></div>
-    <div><label>Night Time</label><input id="leg_night" class="mono" placeholder="HH:MM" value="${L.night||''}" ${state.allowEdit?'':'readonly'}></div>
-    <div><label>VFR</label><input id="leg_vfr" class="mono" placeholder="HH:MM" value="${L.vfr||''}" ${state.allowEdit?'':'readonly'}></div>
-    <div><label>IFR</label><input id="leg_ifr" class="mono" placeholder="HH:MM" value="${L.ifr||''}" ${state.allowEdit?'':'readonly'}></div>
+    <div><label>Start</label><input id="leg_st" class="mono" inputmode="numeric" placeholder="HH:MM" value="${L.st?fmtHM(L.st):''}" ${ro} title="Ex: 07:05, 705, 7:5"></div>
+    <div><label>Take Off</label><input id="leg_to" class="mono" inputmode="numeric" placeholder="HH:MM" value="${L.to?fmtHM(L.to):''}" ${ro} title="Ex: 07:05, 705, 7:5"></div>
+    <div><label>Landing</label><input id="leg_ld" class="mono" inputmode="numeric" placeholder="HH:MM" value="${L.ld?fmtHM(L.ld):''}" ${ro} title="Ex: 07:05, 705, 7:5"></div>
+    <div><label>Shut Down</label><input id="leg_sht" class="mono" inputmode="numeric" placeholder="HH:MM" value="${L.sht?fmtHM(L.sht):''}" ${ro} title="Ex: 07:05, 705, 7:5"></div>
+    <div><label>Day Time</label><input id="leg_day" class="mono" placeholder="HH:MM" value="${L.day||''}" ${ro}></div>
+    <div><label>Night Time</label><input id="leg_night" class="mono" placeholder="HH:MM" value="${L.night||''}" ${ro}></div>
+    <div><label>VFR</label><input id="leg_vfr" class="mono" placeholder="HH:MM" value="${L.vfr||''}" ${ro}></div>
+    <div><label>IFR</label><input id="leg_ifr" class="mono" placeholder="HH:MM" value="${L.ifr||''}" ${ro}></div>
     <div><label>LDG (#)</label><input id="leg_ldg" inputmode="numeric" value="${L.ldgCount||1}"></div>
     <div><label>Start Fuel</label><input id="leg_fuel_start" inputmode="numeric" placeholder="kg/lb" value="${L.startFuel||''}"></div>
     <div><label>Final Fuel</label><input id="leg_fuel_final" inputmode="numeric" placeholder="kg/lb" value="${L.finalFuel||''}"></div>
@@ -203,38 +200,36 @@ function renderLegEditor(){
     <div class="switch"><label>Conta como pouso?</label><input type="checkbox" id="leg_count_ldg" ${L.countLanding?'checked':''}></div>
   `;
   box.appendChild(row);
-
-  // readonly styling
   box.classList.toggle('readonly', !state.allowEdit);
 
   const d = new Date(document.getElementById("date").value+"T00:00:00");
-  const commitHM = (key, raw)=>{
+  const commitHM = (key, el)=>{
     if(!state.allowEdit) return;
-    const n = normalizeHM(raw);
-    if(!n) return; // keep what was displayed
+    const n = normalizeHM(el.value);
+    if(!n){ el.classList.add('invalid'); return; }
+    el.classList.remove('invalid');
     state.legs[i][key] = parseHM(n, d);
+    el.value = n;
     render();
   };
   const wireHM = (id, key)=>{
     const el = document.getElementById(id);
-    const handler = (e)=> commitHM(key, e.target.value);
+    const handler = ()=> commitHM(key, el);
     el.addEventListener('change', handler);
-    el.addEventListener('input', handler);
     el.addEventListener('blur', handler);
-    el.addEventListener('keydown', (ev)=>{ if(ev.key==='Enter'){ handler({target:el}); } });
+    el.addEventListener('keydown', (ev)=>{ if(ev.key==='Enter'){ ev.preventDefault(); handler(); } });
   };
-
-  wireHM("leg_st", "st");
-  wireHM("leg_to", "to");
-  wireHM("leg_ld", "ld");
-  wireHM("leg_sht", "sht");
+  wireHM("leg_st","st");
+  wireHM("leg_to","to");
+  wireHM("leg_ld","ld");
+  wireHM("leg_sht","sht");
 
   document.getElementById("leg_rv").oninput = e=>{ state.legs[i].rv=e.target.value.trim(); };
   document.getElementById("leg_orig").oninput = e=>{ state.legs[i].orig=e.target.value.trim().toUpperCase(); };
   document.getElementById("leg_dst").oninput = e=>{ state.legs[i].dst=e.target.value.trim().toUpperCase(); };
-  const wireSimple = (id,key)=>{ const el=document.getElementById(id); el.oninput = e=>{ if(!state.allowEdit) return; state.legs[i][key]=e.target.value.trim(); }; };
+  const wireSimple = (id,key)=>{ const el=document.getElementById(id); el.onchange = el.onblur = el.oninput = e=>{ if(!state.allowEdit) return; state.legs[i][key]=e.target.value.trim(); render(); }; };
   wireSimple("leg_day","day"); wireSimple("leg_night","night"); wireSimple("leg_vfr","vfr"); wireSimple("leg_ifr","ifr");
-  document.getElementById("leg_ldg").oninput = e=>{ const n=parseInt(e.target.value||'1'); state.legs[i].ldgCount = isNaN(n)?1:n; };
+  document.getElementById("leg_ldg").oninput = e=>{ const n=parseInt(e.target.value||'1'); state.legs[i].ldgCount = isNaN(n)?1:n; render(); };
   document.getElementById("leg_fuel_start").oninput = e=>{ state.legs[i].startFuel=e.target.value.trim(); };
   document.getElementById("leg_fuel_final").oninput = e=>{ state.legs[i].finalFuel=e.target.value.trim(); };
   document.getElementById("leg_mtow").onchange = e=>{ state.legs[i].mtow = e.target.checked; render(); };
@@ -333,9 +328,7 @@ document.getElementById("barStart").onclick = ()=>{
 };
 document.getElementById("barTkoff").onclick = ()=>{
   const L=state.legs[state.active];
-  if(L.to && L.ld){ // etapa anterior já fechou, cria a próxima
-    addLeg();
-  }
+  if(L.to && L.ld){ addLeg(); }
   state.legs[state.active].to = new Date();
   render();
 };
@@ -369,7 +362,7 @@ document.getElementById("btnCSV").onclick = ()=>{
   });
   const csv = [hdr].concat(rows).map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
-  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`flight-logger-v8_1-${document.getElementById("date").value||'data'}.csv`; a.click(); URL.revokeObjectURL(url);
+  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`flight-logger-v8_2-${document.getElementById("date").value||'data'}.csv`; a.click(); URL.revokeObjectURL(url);
 };
 
 // Exportar PDF da LINHA ATUAL
@@ -425,7 +418,7 @@ document.getElementById("btnExportPDF").onclick = ()=>{
 
 // Save/Load/Clear
 document.getElementById("btnSave").onclick = ()=>{
-  localStorage.setItem('flight-logger-v8_1', JSON.stringify({
+  localStorage.setItem('flight-logger-v8_2', JSON.stringify({
     ...state,
     legs: state.legs.map(L=>({...L,
       st: L.st?L.st.toISOString():null, to:L.to?L.toISOString():null, ld:L.ld?L.ld.toISOString():null, sht:L.sht?L.sht.toISOString():null
@@ -435,7 +428,7 @@ document.getElementById("btnSave").onclick = ()=>{
   alert('Salvo no dispositivo.');
 };
 document.getElementById("btnLoad").onclick = ()=>{
-  const raw=localStorage.getItem('flight-logger-v8_1'); if(!raw){ alert('Nada salvo.'); return; }
+  const raw=localStorage.getItem('flight-logger-v8_2'); if(!raw){ alert('Nada salvo.'); return; }
   const o=JSON.parse(raw);
   document.getElementById("date").value = o.date || todayISO;
   state.tail=o.tail||''; state.flightNo=o.flightNo||''; state.captain=o.captain||''; state.copilot=o.copilot||''; state.pob=o.pob||'';
